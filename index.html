@@ -266,26 +266,48 @@
   </div>
 
 <script>
-  const API = "https://script.googleusercontent.com/a/macros/gopika.vn/echo?user_content_key=AY5xjrStkPi-rlPB-OeE6kybtEly-ZBPQmfo0fpOQFbScXYju5osQ3n2EWfyZeTK5LQeCFXnXCVQrmt6sO62-6Ka22j0dyEG2sV5h1RYzJ8-pt19k6Bv-I6R-LD928TUMlCjCnq9Kmd_CT9x3MMiR2DYhQ6YNpnIE25_GXQ8nESc2jFT_jUDHChr9wqNoyGURsUpMhNIVAB6QLYL8CKd9PbRGsZX6p-0Ac3FcETHPI1oKAD8qGDcYICwtFWEy8jkQEAQDHijmKL4pXtlbV_GdJugviiuvpFtprZLok2BXSC3k-H6DNgowrk&lib=MFXx7cGNYsFB2WWrhxZ_P_r8lFvJ_Aw0O";
+  const API = "https://script.google.com/macros/s/AKfycbw86ujyZbVFkP2qwMtXgsdVI74MJOoVnWTWUmX5O5-LhCOafVmoP4SMJqkABCjzvvrO/exec";
   const SPIN_MS = 5600;
   const SLICE_COUNT = 10; // số miếng hiển thị
 
   function jsonp(url) {
   return new Promise((resolve, reject) => {
     const cb = "cb_" + Math.random().toString(36).slice(2);
-    window[cb] = (data) => { cleanup(); resolve(data); };
     const s = document.createElement("script");
+    let done = false;
 
-    const cleanup = () => {
+    function cleanup(err){
+      if(done) return;
+      done = true;
       try { delete window[cb]; } catch(e) {}
-      s.remove();
+      if (s.parentNode) s.parentNode.removeChild(s);
+      if (err) reject(err);
+    }
+
+    // timeout (tránh treo)
+    const t = setTimeout(() => cleanup(new Error("timeout")), 12000);
+
+    window[cb] = (data) => {
+      clearTimeout(t);
+      cleanup();
+      resolve(data);
     };
 
-    s.onerror = () => { cleanup(); reject(new Error("JSONP error")); };
+    s.onerror = () => {
+      clearTimeout(t);
+      cleanup(new Error("load_failed"));
+    };
 
+    // thêm callback + chống cache
     const join = url.includes("?") ? "&" : "?";
-    s.src = url + join + "callback=" + cb + "&_ts=" + Date.now(); // ✅ chống cache
-    document.body.appendChild(s);
+    s.src = url + join + "callback=" + cb + "&_ts=" + Date.now();
+
+    // tăng tương thích mobile
+    s.async = true;
+    s.crossOrigin = "anonymous";
+    s.referrerPolicy = "no-referrer";
+
+    document.head.appendChild(s);
   });
 }
 
@@ -295,7 +317,8 @@
 }
 
 async function apiCall(action, params = {}) {
-  const url = buildUrl(API, { action, ...params });
+  const usp = new URLSearchParams({ action, ...params });
+  const url = API + (API.includes("?") ? "&" : "?") + usp.toString();
   return await jsonp(url);
 }
 
