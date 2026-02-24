@@ -289,7 +289,7 @@
   });
 }
 
-  async function buildUrl(base, params){
+  function buildUrl(base, params){
   const usp = new URLSearchParams(params);
   return base + (base.includes("?") ? "&" : "?") + usp.toString();
 }
