@@ -384,6 +384,7 @@ async function apiCall(action, params = {}) {
   let PRIZES = [];
   let PRIZE_MAP = {};   // prize_id -> prize obj
   let SLICE_IDS = [];   // list of prize_id for each slice (length = SLICE_COUNT)
+  let WHEEL_BUILT = false; // ✅ chỉ build slices 1 lần
 
   function shuffle_(arr){
     for(let i=arr.length-1;i>0;i--){
@@ -394,37 +395,57 @@ async function apiCall(action, params = {}) {
   }
 
   function buildSlices_(prizes, n){
-    const usable = prizes.filter(p => (p.qty_left||0) > 0 && (p.ticket||0) > 0);
-    const total = usable.reduce((s,p)=>s+(p.ticket||0),0) || 1;
+  // ✅ HIỂN THỊ theo qty_total (ổn định), không phụ thuộc qty_left
+  const usable = prizes.filter(p => (p.weight||0) > 0 && (p.qty_total||0) > 0);
 
-    let counts = usable.map(p => Math.max(1, Math.round(n*(p.ticket||0)/total)));
-    let sum = counts.reduce((a,b)=>a+b,0);
+  // ticketDisplay = weight * qty_total (để phân bổ miếng hợp lý)
+  const dispTicket = (p) => (Number(p.weight||1) * Math.max(1, Number(p.qty_total||1)));
 
-    while(sum > n){
-      let i = counts.indexOf(Math.max(...counts));
-      if(counts[i] > 1){ counts[i]--; sum--; } else break;
-    }
-    while(sum < n){
-      let best = 0, bestScore = -1;
-      for(let i=0;i<usable.length;i++){
-        const score = (usable[i].ticket||0) / (counts[i]||1);
-        if(score > bestScore){ bestScore = score; best = i; }
-      }
-      counts[best]++; sum++;
-    }
+  const total = usable.reduce((s,p)=> s + dispTicket(p), 0) || 1;
 
-    const out = [];
-    usable.forEach((p, idx) => {
-      for(let k=0;k<counts[idx];k++) out.push(String(p.prize_id));
-    });
+  let counts = usable.map(p => Math.max(1, Math.round(n * dispTicket(p) / total)));
+  let sum = counts.reduce((a,b)=>a+b,0);
 
-    return shuffle_(out).slice(0, n);
+  // cân về đúng n
+  while(sum > n){
+    let i = counts.indexOf(Math.max(...counts));
+    if(counts[i] > 1){ counts[i]--; sum--; } else break;
   }
+  while(sum < n){
+    let best = 0, bestScore = -1;
+    for(let i=0;i<usable.length;i++){
+      const score = dispTicket(usable[i]) / (counts[i]||1);
+      if(score > bestScore){ bestScore = score; best = i; }
+    }
+    counts[best]++; sum++;
+  }
+
+  const out = [];
+  usable.forEach((p, idx) => {
+    for(let k=0;k<counts[idx];k++) out.push(String(p.prize_id));
+  });
+
+  // không cần shuffle nhiều, giữ ổn định; nếu muốn xen kẽ hơn mình sẽ thêm thuật toán sau
+  return out.slice(0, n);
+}
 
   function parseAmount_(name){
     const digits = String(name||"").replace(/[^\d]/g,"");
     return Number(digits || 0);
   }
+  function formatMoneyVND_(n){
+  const s = String(Math.round(Number(n) || 0));
+  return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + ".đ";
+}
+
+function formatPrizeLabel_(name){
+  const digits = String(name || "").replace(/[^\d]/g, "");
+  if (digits) {
+    const n = Number(digits);
+    if (Number.isFinite(n) && n > 0) return formatMoneyVND_(n);
+  }
+  return String(name || "");
+}
 
   function colorForPrize_(prize){
     const amt = parseAmount_(prize.prize_name);
@@ -435,17 +456,24 @@ async function apiCall(action, params = {}) {
   }
 
   async function loadPrizesAndRender(){
-    const res = await apiCall("prizes");
-    if(!res.ok) return;
+  const res = await apiCall("prizes");
+  if(!res.ok) return;
 
-    PRIZES = (res.prizes || []).filter(p => (p.qty_left||0) > 0 && (p.ticket||0) > 0);
-    PRIZE_MAP = {};
-    PRIZES.forEach(p => PRIZE_MAP[String(p.prize_id)] = p);
+  // ✅ Lấy toàn bộ prizes để hiển thị
+  const all = (res.prizes || []);
 
-    SLICE_IDS = buildSlices_(PRIZES, SLICE_COUNT);
-    drawWheel();
+  // map để draw label + biết hết quà hay chưa
+  PRIZE_MAP = {};
+  all.forEach(p => PRIZE_MAP[String(p.prize_id)] = p);
+
+  // ✅ chỉ build slices 1 lần (giữ nguyên vòng quay)
+  if(!WHEEL_BUILT){
+    SLICE_IDS = buildSlices_(all, SLICE_COUNT);
+    WHEEL_BUILT = true;
   }
 
+  drawWheel();
+}
   // ===== Draw wheel
   const canvas = document.getElementById("wheelCanvas");
   const ctx = canvas.getContext("2d");
@@ -493,7 +521,7 @@ async function apiCall(action, params = {}) {
       ctx.lineWidth = 6;
       ctx.stroke();
 
-      const label = prize.prize_name;
+      const label = formatPrizeLabel_(prize.prize_name);
 
       ctx.save();
       ctx.translate(cx,cy);
