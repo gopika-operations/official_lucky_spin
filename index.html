@@ -403,6 +403,61 @@ async function apiCall(action, params = {}) {
     return arr;
   }
 
+  function interleaveNoAdjacent_(arr, keyFn){
+  // sắp xếp để 2 phần tử có cùng "key" không đứng liền nhau (nếu có thể)
+  const buckets = new Map();
+  for (const x of arr){
+    const k = keyFn(x);
+    if(!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(x);
+  }
+
+  // shuffle nhẹ trong mỗi bucket để tự nhiên
+  for (const [k, list] of buckets){
+    for (let i = list.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+  }
+
+  const out = [];
+  let prevKey = null;
+
+  while (out.length < arr.length){
+    // chọn bucket còn nhiều nhất nhưng khác prevKey
+    let bestKey = null;
+    let bestLen = -1;
+
+    for (const [k, list] of buckets){
+      if (!list.length) continue;
+      if (k === prevKey) continue;
+      if (list.length > bestLen){
+        bestLen = list.length;
+        bestKey = k;
+      }
+    }
+
+    // nếu bắt buộc (chỉ còn bucket trùng prevKey)
+    if (bestKey === null){
+      for (const [k, list] of buckets){
+        if (list.length){
+          bestKey = k;
+          break;
+        }
+      }
+    }
+
+    const pickList = buckets.get(bestKey);
+    const item = pickList.pop();
+    out.push(item);
+    prevKey = bestKey;
+
+    if (!pickList.length) buckets.delete(bestKey);
+  }
+
+  return out;
+}
+  
   function buildSlices_(prizes, n){
   // ✅ HIỂN THỊ theo qty_total (ổn định), không phụ thuộc qty_left
   const usable = prizes.filter(p => (p.weight||0) > 0 && (p.qty_total||0) > 0);
@@ -435,7 +490,8 @@ async function apiCall(action, params = {}) {
   });
 
   // không cần shuffle nhiều, giữ ổn định; nếu muốn xen kẽ hơn mình sẽ thêm thuật toán sau
-  return out.slice(0, n);
+  const mixed = interleaveNoAdjacent_(shuffle_(out), (id) => String(id));
+return mixed.slice(0, n);
 }
 
   function parseAmount_(name){
