@@ -97,7 +97,7 @@
       width: 86%; height: 86%; border-radius: 999px;
       position: relative; display:grid; place-items:center;
       transform: rotate(0deg);
-      transition: transform 5.6s cubic-bezier(.12, .92, .20, 1);
+      transition: transform 3.6s cubic-bezier(.12, .92, .20, 1);
       will-change: transform;
     }
     canvas{
@@ -593,7 +593,7 @@ function formatPrizeLabel_(name){
     const desiredMod = normalizeDeg((-idx * arcDeg) + offset);
     const currentMod = normalizeDeg(currentRotation);
 
-    const extraSpins = 7;
+    const extraSpins = 5;
     let delta = (extraSpins * 360) + (desiredMod - currentMod);
     if (delta < extraSpins * 360) delta += 360;
 
@@ -664,14 +664,27 @@ function startPreSpin_(){
   wheelEl.classList.add("preSpin");
 }
 
-function stopPreSpin_(){
+function stopPreSpin_(afterStop){
+  // chốt góc hiện tại của animation
   const deg = getRotationDeg_(wheelEl);
+
+  // bỏ animation preSpin
   wheelEl.classList.remove("preSpin");
+
+  // đảm bảo transition trở lại (nếu trước đó bị override)
+  wheelEl.style.transition = ""; 
+
   currentRotation = deg;
 
-  // đợi 1 frame để tắt animation rồi mới áp transform (mượt, không giật)
+  // 1) set transform về góc hiện tại
+  wheelEl.style.transform = `rotate(${currentRotation}deg)`;
+
+  // 2) force reflow để browser "apply" trạng thái mới
+  void wheelEl.offsetWidth;
+
+  // 3) sang frame tiếp theo mới cho quay tới kết quả (để transition chạy)
   requestAnimationFrame(() => {
-    wheelEl.style.transform = `rotate(${currentRotation}deg)`;
+    if (typeof afterStop === "function") afterStop();
   });
 }
 async function doSpin(){
@@ -707,8 +720,9 @@ async function doSpin(){
     const prizeName = (PRIZE_MAP[prizeId]?.prize_name) || (res.prize?.prize_name) || "—";
 
     // ✅ có kết quả rồi → dừng pre-spin và quay tới đúng ô
-    stopPreSpin_();
-    spinToPrizeId(prizeId);
+    stopPreSpin_(() => {
+  spinToPrizeId(prizeId);
+});
 
     setTimeout(async () => {
       resultEl.textContent = prizeName;
