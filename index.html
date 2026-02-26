@@ -97,7 +97,7 @@
       width: 86%; height: 86%; border-radius: 999px;
       position: relative; display:grid; place-items:center;
       transform: rotate(0deg);
-      transition: transform 5.6s cubic-bezier(.1,.8,.15,1);
+      transition: transform 5.6s cubic-bezier(.12, .92, .20, 1);
       will-change: transform;
     }
     canvas{
@@ -175,6 +175,15 @@
       background: linear-gradient(135deg, var(--gpk-green), var(--gpk-green-2));
       color:#fff; box-shadow: 0 12px 22px rgba(20,184,122,.24);
     }
+    /* quay ngay lập tức trong lúc chờ API */
+.wheel.preSpin{
+  animation: preSpin .55s linear infinite;
+  transition: none !important;
+}
+@keyframes preSpin{
+  from{ transform: rotate(0deg); }
+  to{ transform: rotate(360deg); }
+}
   </style>
 </head>
 
@@ -627,59 +636,101 @@ function formatPrizeLabel_(name){
       setNote(String(e));
     }
   }
+function getRotationDeg_(el){
+  const tr = getComputedStyle(el).transform;
+  if(!tr || tr === "none") return 0;
 
-  async function doSpin(){
-    const driver_id = driverEl.value.trim();
-    const token = tokenEl.value.trim();
-    if(!driver_id || !token){
-      setStatus("Vui lòng nhập driver_id và token.", false);
+  const m2 = tr.match(/^matrix\((.+)\)$/);
+  if(m2){
+    const [a,b] = m2[1].split(",").map(x=>parseFloat(x));
+    let deg = Math.atan2(b, a) * (180/Math.PI);
+    if(deg < 0) deg += 360;
+    return deg;
+  }
+
+  const m3 = tr.match(/^matrix3d\((.+)\)$/);
+  if(m3){
+    const v = m3[1].split(",").map(x=>parseFloat(x));
+    const a = v[0], b = v[1];
+    let deg = Math.atan2(b, a) * (180/Math.PI);
+    if(deg < 0) deg += 360;
+    return deg;
+  }
+
+  return 0;
+}
+
+function startPreSpin_(){
+  wheelEl.classList.add("preSpin");
+}
+
+function stopPreSpin_(){
+  const deg = getRotationDeg_(wheelEl);
+  wheelEl.classList.remove("preSpin");
+  currentRotation = deg;
+
+  // đợi 1 frame để tắt animation rồi mới áp transform (mượt, không giật)
+  requestAnimationFrame(() => {
+    wheelEl.style.transform = `rotate(${currentRotation}deg)`;
+  });
+}
+async function doSpin(){
+  const driver_id = driverEl.value.trim();
+  const token = tokenEl.value.trim();
+  if(!driver_id || !token){
+    setStatus("Vui lòng nhập SĐT và CCCD.", false);
+    return;
+  }
+  saveCreds();
+
+  enableSpin(false);
+  btnCheck.disabled = true;
+  resultEl.textContent = "Đang quay…";
+  setNote("Đang xác nhận kết quả…");
+
+  // ✅ quay ngay lập tức
+  startPreSpin_();
+
+  try{
+    const res = await apiCall("spin", { driver_id, token });
+
+    if(!res.ok){
+      stopPreSpin_();
+      resultEl.textContent = "—";
+      setStatus(res.error || "Quay thất bại.", false);
+      setNote("Bạn có thể bấm Kiểm tra lượt rồi thử lại.");
+      btnCheck.disabled = false;
       return;
     }
-    saveCreds();
 
-    enableSpin(false);
-    btnCheck.disabled = true;
-    resultEl.textContent = "Đang quay…";
-    setNote("Đang lấy kết quả từ hệ thống…");
+    const prizeId = String(res.prize?.prize_id || "");
+    const prizeName = (PRIZE_MAP[prizeId]?.prize_name) || (res.prize?.prize_name) || "—";
 
-    try{
-      const res = await apiCall("spin", { driver_id, token });
-      if(!res.ok){
-        resultEl.textContent = "—";
-        setStatus(res.error || "Quay thất bại.", false);
-        setNote("Bạn có thể bấm Kiểm tra lượt rồi thử lại.");
-        btnCheck.disabled = false;
-        return;
-      }
+    // ✅ có kết quả rồi → dừng pre-spin và quay tới đúng ô
+    stopPreSpin_();
+    spinToPrizeId(prizeId);
 
-      const prizeId = String(res.prize?.prize_id || "");
-      const prizeName = (PRIZE_MAP[prizeId]?.prize_name) || (res.prize?.prize_name) || "—";
+    setTimeout(async () => {
+      resultEl.textContent = prizeName;
 
-      // quay tới đúng ô theo prize_id
-      spinToPrizeId(prizeId);
-
-      setTimeout(async () => {
-        resultEl.textContent = prizeName;
-
-        const remainAfter = res.driver?.spins_remaining_after ?? 0;
-        setStatus(`Bạn trúng: ${prizeName}. Còn ${remainAfter} lượt.`);
-        setNote(remainAfter > 0 ? "Bạn còn lượt, có thể quay tiếp." : "Bạn đã dùng hết lượt. Xin cảm ơn!");
-        enableSpin(remainAfter > 0);
-        btnCheck.disabled = false;
-
-        openModal(prizeName, remainAfter);
-
-        // reload wheel theo tồn kho mới
-        await loadPrizesAndRender();
-      }, SPIN_MS);
-
-    }catch(e){
-      resultEl.textContent = "—";
-      setStatus("Lỗi gọi API.", false);
-      setNote(String(e));
+      const remainAfter = res.driver?.spins_remaining_after ?? 0;
+      setStatus(`Bạn trúng: ${prizeName}. Còn ${remainAfter} lượt.`);
+      setNote(remainAfter > 0 ? "Bạn còn lượt, có thể quay tiếp." : "Bạn đã dùng hết lượt. Xin cảm ơn!");
+      enableSpin(remainAfter > 0);
       btnCheck.disabled = false;
-    }
+
+      openModal(prizeName, remainAfter);
+      await loadPrizesAndRender();
+    }, SPIN_MS);
+
+  }catch(e){
+    stopPreSpin_();
+    resultEl.textContent = "—";
+    setStatus("Lỗi gọi API.", false);
+    setNote(String(e && e.message ? e.message : e));
+    btnCheck.disabled = false;
   }
+}
 
   btnCheck.addEventListener("click", doCheck);
   btnSpin.addEventListener("click", doSpin);
